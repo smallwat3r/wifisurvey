@@ -33,9 +33,10 @@ flowchart LR
         end
     end
 
-    dev <-- WiFi link --> ap
-    ap -- upload --> srv
-    srv -- download --> ap
+    dev <-- "WiFi link, read locally: signal, BSSID, roams (iw)" --> ap
+    ap -- "upload, loaded RTT, retransmits (iperf3)" --> srv
+    srv -- "download (iperf3)" --> ap
+    ap -. "latency (ping)" .-> srv
 ```
 
 Every measurement traverses the whole path: download (server to client) and

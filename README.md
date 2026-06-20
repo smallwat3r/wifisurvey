@@ -169,8 +169,7 @@ test, so they are blank for spots with no upload.
 |----------|------------------------------------------------------------------|
 | down     | Download throughput to the server, Mbps (aggregate, 8 streams).  |
 | up       | Upload throughput to the server, Mbps. The streaming direction.  |
-| rtt      | Loaded round-trip during the upload test, ms (live shows each    |
-|          | reading's peak, analyse the average). The bufferbloat.           |
+| rtt      | Loaded round-trip during the upload test, ms (live shows each reading's peak, analyse the average). The bufferbloat. |
 | qual     | RTT grade: good <100ms, ok <200, poor <400, bad otherwise.       |
 | retr     | TCP retransmits during the upload test. A packet-loss proxy.     |
 | dBm      | Signal strength. Closer to zero is stronger, -67 is a good floor.|

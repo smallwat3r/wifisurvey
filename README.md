@@ -33,10 +33,17 @@ flowchart LR
         end
     end
 
+    destNote["server we control, in our chosen infra/region"]
+
     dev <-- "WiFi link, read locally: signal, BSSID, roams (iw)" --> ap
     ap -- "upload, loaded RTT, retransmits (iperf3)" --> srv
     srv -- "download (iperf3)" --> ap
     ap -. "latency (ping)" .-> srv
+
+    destNote -.- infra
+
+    classDef note fill:#f6f6f6,stroke:#cccccc,color:#777777
+    class destNote note
 ```
 
 Every measurement traverses the whole path: download (server to client) and

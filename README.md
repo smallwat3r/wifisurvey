@@ -22,27 +22,27 @@ hurt that deployment, including the wider path, not just the local WiFi.
 
 ```mermaid
 flowchart LR
-    subgraph site["Building / site network"]
-        dev["<div style='text-align:left'>Survey client (laptop or device)<br/>walks the site, runs wifisurvey, logs throughput, signal, latency, roams</div>"]
-        ap["WiFi access points<br/>(handovers as you walk)"]
+    subgraph net["LAN / VPN / public network"]
+        subgraph site["Building / site network"]
+            dev["<div style='text-align:left'>Survey client (laptop or device) - walks the site, runs wifisurvey, logs throughput, signal, latency, roams</div>"]
+            ap["WiFi access points<br/>(handovers as you walk)"]
+        end
+
+        subgraph infra["Destination"]
+            srv["iperf3 server<br/>(iperf3 -s)"]
+        end
     end
 
-    subgraph infra["Destination"]
-        srv["iperf3 server<br/>(iperf3 -s)"]
-    end
-
-    pathNote["LAN / VPN / public network"]
     destNote["e.g. same cloud region as your services"]
 
     dev <-- WiFi link --> ap
     ap -- upload --> srv
     srv -- download --> ap
 
-    pathNote -.- srv
     destNote -.- srv
 
     classDef note fill:#fffbe6,stroke:#e0c000,color:#665c00
-    class pathNote,destNote note
+    class destNote note
 ```
 
 Every measurement traverses the whole path: download (server to client) and

@@ -96,7 +96,7 @@ func summarize(records [][]string) ([]spotStat, error) {
 		}
 		out = append(out, s)
 	}
-	// worst first by average upload (the streaming direction); no upload to top
+	// worst first by average upload (the streaming direction), no upload to top
 	key := func(s spotStat) float64 {
 		if !s.hasUp {
 			return -1

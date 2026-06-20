@@ -121,7 +121,7 @@ func (s *screen) inputLoop(cancel func(), onLabel func(string)) {
 		case b == 127 || b == 8: // backspace / DEL
 			s.mu.Lock()
 			if n := len(s.buf); n > 0 {
-				s.buf = s.buf[:n-1] // ponytail: byte-wise, fine for ASCII landmarks
+				s.buf = s.buf[:n-1] // byte-wise, fine for ASCII landmarks
 			}
 			s.drawPromptLocked()
 			s.mu.Unlock()

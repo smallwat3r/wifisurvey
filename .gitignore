@@ -1,0 +1,6 @@
+/wifisurvey
+/sample-survey.csv
+*.gp
+*.pdf
+*.out
+*.test

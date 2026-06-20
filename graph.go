@@ -1,0 +1,478 @@
+package main
+
+import (
+	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// rttColour maps a loaded RTT (ms) to a green/yellow/red 0xRRGGBB code for the
+// chart bar: good for real-time use, usable, then poor (matches rttGrade bands).
+func rttColour(ms float64) int {
+	switch {
+	case ms < 100:
+		return 0x1a9850
+	case ms < 200:
+		return 0xe0c000
+	default:
+		return 0xcc0000
+	}
+}
+
+// reading is one survey row reduced to down/up against wall-clock time (unix
+// seconds), plus the label and AP, for the time-series chart and its markers.
+type reading struct {
+	unix           float64
+	down, up       float64
+	dbm            float64
+	rtt            float64
+	hasDown, hasUp bool
+	hasDbm, hasRtt bool
+	label, bssid   string
+}
+
+// timeSeries parses records into per-reading down/up values against wall-clock
+// time. Rows with an unparseable timestamp drop out.
+func timeSeries(records [][]string) []reading {
+	if len(records) < 2 {
+		return nil
+	}
+	col := map[string]int{}
+	for i, n := range records[0] {
+		col[n] = i
+	}
+	get := func(r []string, name string) string {
+		if i, ok := col[name]; ok && i < len(r) {
+			return r[i]
+		}
+		return ""
+	}
+	var out []reading
+	for _, r := range records[1:] {
+		t, err := time.Parse("2006-01-02 15:04:05", get(r, "timestamp"))
+		if err != nil {
+			continue
+		}
+		rd := reading{unix: float64(t.Unix()), label: get(r, "label"), bssid: get(r, "bssid")}
+		if v, err := strconv.ParseFloat(get(r, "mbps_down"), 64); err == nil {
+			rd.down, rd.hasDown = v, true
+		}
+		if v, err := strconv.ParseFloat(get(r, "mbps_up"), 64); err == nil {
+			rd.up, rd.hasUp = v, true
+		}
+		if v, err := strconv.ParseFloat(get(r, "signal_dbm"), 64); err == nil {
+			rd.dbm, rd.hasDbm = v, true
+		}
+		if v, err := strconv.ParseFloat(get(r, "rtt_ms"), 64); err == nil {
+			rd.rtt, rd.hasRtt = v, true
+		}
+		out = append(out, rd)
+	}
+	return out
+}
+
+// trendPoints smooths a direction into ~60 buckets, returning {unix seconds,
+// mean Mbps} per bucket for an overlaid trend line.
+func trendPoints(rs []reading, up bool) [][2]float64 {
+	w := len(rs) / 60
+	if w < 4 {
+		w = 4
+	}
+	var out [][2]float64
+	for i := 0; i < len(rs); i += w {
+		var sumV, sumT float64
+		var nV, nT int
+		for _, r := range rs[i:min(i+w, len(rs))] {
+			v, has := r.down, r.hasDown
+			if up {
+				v, has = r.up, r.hasUp
+			}
+			sumT += r.unix
+			nT++
+			if has {
+				sumV += v
+				nV++
+			}
+		}
+		if nV == 0 {
+			continue
+		}
+		out = append(out, [2]float64{sumT / float64(nT), round1(sumV / float64(nV))})
+	}
+	return out
+}
+
+// graph writes a self-contained gnuplot script (inline data). Run
+// `gnuplot FILE.gp` to render a PDF. No extension defaults to .gp.
+func graph(path string, records [][]string, meta map[string]string) {
+	if filepath.Ext(path) == "" {
+		path += ".gp"
+	}
+	pdf := strings.TrimSuffix(filepath.Base(path), ".gp") + ".pdf"
+	if err := os.WriteFile(path, []byte(gnuplotScript(records, pdf, meta)), 0o644); err != nil {
+		fatal(err.Error())
+	}
+	fmt.Printf("Gnuplot script written to %s (run: gnuplot %s -> %s)\n", path, path, pdf)
+}
+
+// gpEscape escapes a string for a gnuplot double-quoted literal. The terminal
+// runs in enhanced-text mode, so it also escapes the markup specials
+// ({ } ^ _ @ & ~): a doubled backslash survives string parsing as one, which
+// tells the enhanced processor to render the character literally.
+func gpEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	for _, c := range []string{"{", "}", "^", "_", "@", "&", "~"} {
+		s = strings.ReplaceAll(s, c, `\\`+c)
+	}
+	return s
+}
+
+// gnuplotScript builds the self-contained gnuplot script: throughput over time
+// on a linear Mbps axis, faint down/up scatter with bold trend lines, shaded
+// location bands with per-location and overall averages, and a bottom strip of
+// colour-coded signal (dBm) and loaded-RTT bars marking each AP switch.
+func gnuplotScript(records [][]string, pdf string, meta map[string]string) string {
+	rs := timeSeries(records)
+	var b strings.Builder
+	p := func(format string, a ...any) { fmt.Fprintf(&b, format, a...) }
+	w := func(s string) { b.WriteString(s) } // static text: no % or \n escaping
+
+	maxV := 0.0
+	minDbm, maxDbm := math.Inf(1), math.Inf(-1)
+	hasDbm := false
+	hasRtt := false
+	var g struct { // overall averages across every reading, shown under the title
+		downSum, upSum, dbmSum, rttSum float64
+		downN, upN, dbmN, rttN         int
+	}
+	for _, r := range rs {
+		if r.hasDown {
+			maxV = math.Max(maxV, r.down)
+			g.downSum, g.downN = g.downSum+r.down, g.downN+1
+		}
+		if r.hasUp {
+			maxV = math.Max(maxV, r.up)
+			g.upSum, g.upN = g.upSum+r.up, g.upN+1
+		}
+		if r.hasDbm {
+			hasDbm = true
+			minDbm, maxDbm = math.Min(minDbm, r.dbm), math.Max(maxDbm, r.dbm)
+			g.dbmSum, g.dbmN = g.dbmSum+r.dbm, g.dbmN+1
+		}
+		if r.hasRtt {
+			hasRtt = true
+			g.rttSum, g.rttN = g.rttSum+r.rtt, g.rttN+1
+		}
+	}
+	yMax := math.Ceil(maxV/10) * 10
+	if yMax == 0 {
+		yMax = 10
+	}
+	// the signal/RTT bars live in a reserved strip below the data (negative y),
+	// so they sit above the time axis without overlaying the throughput lines
+	nBar := 0
+	if hasDbm {
+		nBar++
+	}
+	if hasRtt {
+		nBar++
+	}
+	// the strip stacks (top to bottom): per-location stats block, BSSID box, then
+	// the signal/RTT bars, all below the data so nothing overlays the throughput
+	band := 0.0
+	switch nBar {
+	case 2:
+		band = yMax * 0.46
+	case 1:
+		band = yMax * 0.32
+	}
+	yLoc := -band * 0.16 // per-location name + averages, upper strip
+	yName, yDbm, yRtt := 0.0, 0.0, 0.0
+	switch {
+	case nBar == 2:
+		yName, yDbm, yRtt = -band*0.49, -band*0.61, -band*0.85
+	case hasDbm:
+		yName, yDbm = -band*0.58, -band*0.80
+	case hasRtt:
+		yName, yRtt = -band*0.58, -band*0.80
+	}
+	yAP := yDbm // AP-switch diamonds ride the dBm bar (or RTT bar if no signal)
+	if !hasDbm {
+		yAP = yRtt
+	}
+	lastX := int64(rs[len(rs)-1].unix)
+
+	p("# Generated by wifisurvey. Render a vector PDF with: gnuplot %s\n", pdf[:len(pdf)-4]+".gp")
+	p("set terminal pdfcairo enhanced size 9in,5in font \"Helvetica,11\"\n")
+	p("set output '%s'\n\n", pdf)
+	p("unset title\n")
+	// title, with the iperf3 target from the survey metadata if present
+	title := "Throughput over time"
+	if h := meta["host"]; h != "" {
+		tgt := "iperf3 " + h
+		if port := meta["port"]; port != "" {
+			tgt += ":" + port
+		}
+		title += fmt.Sprintf("  {/*0.7 (vs %s)}", tgt)
+	}
+	p("set label \"%s\" at screen 0.015, screen 0.965 left font \"Helvetica,13\"\n", title)
+	// overall averages across the whole survey, under the title
+	var parts []string
+	if g.downN > 0 {
+		parts = append(parts, fmt.Sprintf("down: %.0f", g.downSum/float64(g.downN)))
+	}
+	if g.upN > 0 {
+		parts = append(parts, fmt.Sprintf("up: %.0f Mbps", g.upSum/float64(g.upN)))
+	}
+	if g.dbmN > 0 {
+		avg := g.dbmSum / float64(g.dbmN)
+		parts = append(parts, fmt.Sprintf("dbm: %.0f (%d%%)", avg, dbmToPct(int(math.Round(avg)))))
+	}
+	if g.rttN > 0 {
+		parts = append(parts, fmt.Sprintf("rtt: %s", rttGrade(g.rttSum/float64(g.rttN))))
+	}
+	overall := "global: " + strings.Join(parts, ", ")
+	p("set label \"%s\" at screen 0.015, screen 0.94 left font \",9\" tc rgb \"black\"\n", overall)
+	// footer explaining the metrics, in the reserved space below the axis. The
+	// \n are literal (rendered line breaks in the label), the % is literal too.
+	p("set bmargin at screen 0.20\n")
+	w(`set label "down / up: TCP throughput to the test host in Mbps, higher is better\n` +
+		`dBm: WiFi signal strength (RSSI), closer to 0 is stronger, the % is link quality\n` +
+		`RTT: round-trip latency measured during the upload in ms, lower is better" ` +
+		`at screen 0.015, screen 0.075 left font ",8" tc rgb "#555555"` + "\n")
+	w(`set xdata time
+set timefmt "%s"
+set format x "%H:%M:%S"
+set xtics rotate by -90
+set ylabel "Mbps"
+`)
+	yStep := math.Max(10, math.Ceil(yMax/8/10)*10)
+	p("set yrange [%g:%g]\nset ytics 0,%g,%g\n", -band, yMax, yStep, yMax)
+	w(`set grid ytics lc rgb "#cccccc" lw 1
+set border lw 2
+`)
+	if band > 0 {
+		// faint line at zero separating the data from the bar strip below
+		w(`set arrow from graph 0, first 0 to graph 1, first 0 nohead lc rgb "#888888" lw 1 front` + "\n")
+	}
+	w("set key tmargin right vertical maxrows 3\n\n")
+	if hasDbm {
+		// palette for the dBm bar: red (weak) -> yellow -> green (strong)
+		w(`set palette defined (0 "#cc0000", 0.5 "#e0c000", 1 "#1a9850")` + "\n")
+		p("set cbrange [%g:%g]\n", minDbm, maxDbm)
+		w("unset colorbox\n\n")
+	}
+	// BSSID labels are drawn in a bright-yellow, black-bordered box (matching
+	// the AP diamond marker)
+	w(`set style textbox opaque fillcolor rgb "#ffe000" border rgb "black" lw 1` + "\n\n")
+
+	block := func(name string, sel func(reading) (float64, bool)) {
+		p("$%s << EOD\n", name)
+		for _, r := range rs {
+			if v, ok := sel(r); ok {
+				p("%d %s\n", int64(r.unix), fmt1(v))
+			}
+		}
+		p("EOD\n\n")
+	}
+	block("down", func(r reading) (float64, bool) { return r.down, r.hasDown })
+	block("up", func(r reading) (float64, bool) { return r.up, r.hasUp })
+	if hasRtt {
+		// time + a discrete green/yellow/red colour by loaded-RTT quality
+		p("$rtt << EOD\n")
+		for _, r := range rs {
+			if r.hasRtt {
+				p("%d %d\n", int64(r.unix), rttColour(r.rtt))
+			}
+		}
+		p("EOD\n\n")
+	}
+	downTrend, upTrend := trendPoints(rs, false), trendPoints(rs, true)
+	for _, t := range []struct {
+		name string
+		pts  [][2]float64
+	}{{"downtrend", downTrend}, {"uptrend", upTrend}} {
+		p("$%s << EOD\n", t.name)
+		for _, pt := range t.pts {
+			p("%d %s\n", int64(pt[0]), fmt1(pt[1]))
+		}
+		p("EOD\n\n")
+	}
+	if hasDbm {
+		p("$dbm << EOD\n")
+		for _, r := range rs {
+			if r.hasDbm {
+				p("%d %g\n", int64(r.unix), r.dbm)
+			}
+		}
+		p("EOD\n\n")
+		// name the bar at its right-hand end
+		p("set label \"signal (dBm)\" at %d, %g right offset 0,-1 tc rgb \"#333333\" font \",8\"\n\n",
+			lastX, yDbm)
+	}
+	if hasRtt {
+		p("set label \"RTT (ms)\" at %d, %g right offset 0,-1 tc rgb \"#333333\" font \",8\"\n\n",
+			lastX, yRtt)
+	}
+
+	// locations are regions, so shade each contiguous one as a faint band
+	// (behind the data, alternating ones tinted) and name it in the middle,
+	// clearer than a boundary line.
+	type seg struct {
+		label          string
+		x0, x1         int64
+		n              int     // readings in this location
+		downSum, upSum float64 // average throughput shown by the name
+		downN, upN     int
+		dbmSum         float64 // average signal shown by the name
+		dbmN           int
+		rttSum         float64 // average RTT quality shown by the name
+		rttN           int
+	}
+	var segs []seg
+	for i, r := range rs {
+		if i == 0 || r.label != rs[i-1].label {
+			if n := len(segs); n > 0 {
+				segs[n-1].x1 = int64(r.unix)
+			}
+			segs = append(segs, seg{label: r.label, x0: int64(r.unix), x1: int64(r.unix)})
+		}
+		s := &segs[len(segs)-1]
+		s.n++
+		if r.hasDown {
+			s.downSum += r.down
+			s.downN++
+		}
+		if r.hasUp {
+			s.upSum += r.up
+			s.upN++
+		}
+		if r.hasDbm {
+			s.dbmSum += r.dbm
+			s.dbmN++
+		}
+		if r.hasRtt {
+			s.rttSum += r.rtt
+			s.rttN++
+		}
+	}
+	if n := len(segs); n > 0 {
+		segs[n-1].x1 = int64(rs[len(rs)-1].unix)
+	}
+	obj, shade := 1, 0
+	for _, s := range segs {
+		if s.label == "" || s.x1 <= s.x0 {
+			continue
+		}
+		if shade%2 == 0 {
+			p("set object %d rectangle from %d, graph 0 to %d, graph 1 fc rgb \"#fcf6d8\" fs transparent solid 0.35 noborder behind\n",
+				obj, s.x0, s.x1)
+			obj++
+		}
+		shade++
+	}
+
+	// AP change: a diamond on the signal bar, the BSSID named just above it.
+	// The first reading's AP is marked too.
+	yBox := "graph 0.93"
+	if nBar > 0 {
+		yBox = fmt.Sprintf("%g", yName)
+	}
+	var ap strings.Builder
+	prevBssid := ""
+	for _, r := range rs {
+		if r.bssid != "" && r.bssid != prevBssid {
+			t := int64(r.unix)
+			fmt.Fprintf(&ap, "%d %g\n", t, yAP)
+			p("set label \"%s\" at %d, %s center boxed tc rgb \"black\" font \",7\"\n",
+				gpEscape(r.bssid), t, yBox)
+		}
+		prevBssid = r.bssid
+	}
+	hasAP := ap.Len() > 0
+	p("$ap << EOD\n%sEOD\n\n", ap.String())
+
+	// location names emitted last so they draw on top of the AP boxes and bar,
+	// with reading count and the location's average signal under the name
+	for _, s := range segs {
+		if s.label == "" || s.x1 <= s.x0 {
+			continue
+		}
+		// name on top, then two labelled stat lines: throughput, then signal/RTT
+		l1 := fmt.Sprintf("n: %d", s.n)
+		if s.downN > 0 {
+			l1 += fmt.Sprintf(", down: %.0f", s.downSum/float64(s.downN))
+		}
+		if s.upN > 0 {
+			l1 += fmt.Sprintf(", up: %.0f Mbps", s.upSum/float64(s.upN))
+		}
+		l2 := ""
+		if s.dbmN > 0 {
+			avg := s.dbmSum / float64(s.dbmN)
+			l2 = fmt.Sprintf("dbm: %.0f (%d%%)", avg, dbmToPct(int(math.Round(avg))))
+		}
+		if s.rttN > 0 {
+			if l2 != "" {
+				l2 += ", "
+			}
+			l2 += fmt.Sprintf("rtt: %s", rttGrade(s.rttSum/float64(s.rttN)))
+		}
+		txt := fmt.Sprintf("{/:Bold %s}\\n%s", gpEscape(s.label), l1)
+		if l2 != "" {
+			txt += "\\n" + l2
+		}
+		// in the strip above the signal bar when there is one, else top of plot
+		yLab := "graph 0.95"
+		if nBar > 0 {
+			yLab = fmt.Sprintf("%g", yLoc)
+		}
+		p("set label \"%s\" at %d, %s center tc rgb \"#8a6d00\" font \",8\"\n",
+			txt, (s.x0+s.x1)/2, yLab)
+	}
+	p("\n")
+
+	var elems []string
+	if hasDbm {
+		// dBm signal bar in the bottom strip, coloured red (weak) to green (strong)
+		elems = append(elems, fmt.Sprintf(`  $dbm using 1:(%g):2 with lines lw 8 lc palette notitle`, yDbm))
+	}
+	if hasRtt {
+		// loaded RTT bar below it, green/yellow/red by quality (own colour column)
+		elems = append(elems, fmt.Sprintf(`  $rtt using 1:(%g):2 with lines lw 8 lc rgb variable notitle`, yRtt))
+	}
+	elems = append(elems,
+		`  $down using 1:2 with points pt 7 ps 0.3 lc rgb "#8000b8d4" notitle`,
+		`  $up using 1:2 with points pt 7 ps 0.3 lc rgb "#80ff1493" notitle`,
+		`  $downtrend using 1:2 smooth mcsplines with lines lw 4 lc rgb "#0033cc" title "down"`,
+		`  $uptrend using 1:2 smooth mcsplines with lines lw 4 lc rgb "#cc0000" title "up"`,
+	)
+	if hasAP {
+		// filled diamond, black border + bright-yellow fill (a larger black
+		// point then a smaller yellow one on top), sitting on the dBm bar
+		elems = append(elems,
+			`  $ap using 1:2 with points pt 13 ps 1.3 lc rgb "black" notitle`,
+			`  $ap using 1:2 with points pt 13 ps 0.9 lc rgb "#ffe000" notitle`,
+			`  keyentry with points pt 13 ps 1.3 lc rgb "#ffe000" title "AP switch"`)
+	}
+	if hasDbm {
+		// dBm strength key: three buckets matching the palette colours
+		elems = append(elems,
+			`  keyentry with lines lw 8 lc rgb "#1a9850" title "signal strong (>= -60 dBm)"`,
+			`  keyentry with lines lw 8 lc rgb "#e0c000" title "signal ok (-60 to -75)"`,
+			`  keyentry with lines lw 8 lc rgb "#cc0000" title "signal weak (< -75)"`)
+	}
+	if hasRtt {
+		// loaded RTT key: three buckets matching the bar colours
+		elems = append(elems,
+			`  keyentry with lines lw 8 lc rgb "#1a9850" title "RTT good (< 100 ms)"`,
+			`  keyentry with lines lw 8 lc rgb "#e0c000" title "RTT ok (100-200)"`,
+			`  keyentry with lines lw 8 lc rgb "#cc0000" title "RTT bad (>= 200)"`)
+	}
+	p("\nplot \\\n%s\n", strings.Join(elems, ", \\\n"))
+	return b.String()
+}

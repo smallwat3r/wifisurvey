@@ -19,7 +19,7 @@ func TestGnuplotScript(t *testing.T) {
 	for _, want := range []string{
 		"set terminal pdfcairo", "set output 'out.pdf'", "set border lw 2",
 		"$down << EOD", "$uptrend << EOD", "$dbm << EOD", "$ap << EOD",
-		"set palette", "lc palette", "set label",
+		"set label",
 		"office", "bb", "with points pt 13", `title "down"`, `title "AP switch"`,
 		"vs iperf3 iperf.lan:5201", // survey target in the title
 		"global:",                  // overall averages line

@@ -23,22 +23,22 @@ hurt that deployment, including the wider path, not just the local WiFi.
 ```mermaid
 flowchart LR
     subgraph site["Building / site network"]
-        dev["Survey client (laptop or device)<br/>walks the site, runs wifisurvey<br/>logs throughput, signal, latency, roams"]
+        dev["<div style='text-align:left'>Survey client (laptop or device)<br/>walks the site, runs wifisurvey<br/>logs throughput, signal, latency, roams</div>"]
         ap["WiFi access points<br/>(handovers as you walk)"]
-        dev -. WiFi link .-> ap
     end
 
-    subgraph infra["External infra (your real destination)<br/>e.g. same cloud region as your services"]
+    subgraph infra["Destination<br/>e.g. same cloud region as your services"]
         srv["iperf3 server<br/>(iperf3 -s)"]
     end
 
-    ap -- LAN / VPN / public path --> srv
-    srv -- download (server to client) --> dev
-    dev -- upload (client to server) --> srv
+    dev <-- "WiFi link" --> ap
+    ap <-- "LAN / VPN / public path" --> srv
 ```
 
-The client walks the site measuring the full end-to-end path to the server you
-control, not just the local link, so the weak spots reflect your actual traffic.
+Every measurement traverses the whole path: download (server to client) and
+upload (client to server) both ride the WiFi link, through the access point, to
+the iperf3 server you control. So the weak spots reflect your actual end-to-end
+traffic, not just the local link.
 
 ## Requirements
 

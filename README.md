@@ -20,27 +20,11 @@ hurt that deployment, including the wider path, not just the local WiFi.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    subgraph net["LAN / VPN / public network"]
-        subgraph site["Building / site network"]
-            dev["<div style='text-align:left'>Survey client (laptop or device) - walks the site, runs wifisurvey, logs throughput, signal, latency, roams</div>"]
-            ap["WiFi access points<br/>(handovers as you walk)"]
-        end
-
-        subgraph infra["Destination"]
-            srv["<div style='text-align:left'>iperf3 server (iperf3 -s)<br/>a server we control, in our chosen infra/region</div>"]
-        end
-    end
-
-    dev <-- "WiFi link, read locally: signal, BSSID, roams (iw)" --> ap
-    ap -- "upload, loaded RTT, retransmits (iperf3), latency (ping)" --> srv
-    srv -- "download (iperf3)" --> ap
-```
+![wifisurvey architecture](img/arch.png)
 
 Every measurement traverses the whole path: download (server to client) and
-upload (client to server) both ride the WiFi link, through the access point, to
-the iperf3 server you control. So the weak spots reflect your actual end-to-end
+upload (client to server) both ride the WiFi link, through the access point (if
+any), to the iperf3 server you control. So the weak spots reflect your actual end-to-end
 traffic, not just the local link.
 
 ## Requirements

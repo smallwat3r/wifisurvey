@@ -33,16 +33,9 @@ flowchart LR
         end
     end
 
-    destNote["e.g. same cloud region as your services"]
-
     dev <-- WiFi link --> ap
     ap -- upload --> srv
     srv -- download --> ap
-
-    destNote -.- srv
-
-    classDef note fill:#fffbe6,stroke:#e0c000,color:#665c00
-    class destNote note
 ```
 
 Every measurement traverses the whole path: download (server to client) and

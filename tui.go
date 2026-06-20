@@ -18,6 +18,7 @@ import (
 type screen struct {
 	mu       sync.Mutex
 	rows     int
+	next     int    // next log row to fill, logs grow downward then scroll
 	buf      []byte // current input line, echoed by us since raw mode won't
 	oldState *term.State
 }
@@ -37,9 +38,9 @@ func newScreen() *screen {
 	if err != nil {
 		return nil
 	}
-	s := &screen{rows: rows, oldState: old}
-	// scroll region = rows 1..rows-1, leaving the last row for the prompt
-	fmt.Printf("\033[1;%dr", rows-1)
+	s := &screen{rows: rows, next: 1, oldState: old}
+	// clear, then scroll region = rows 1..rows-1, last row reserved for the prompt
+	fmt.Printf("\033[2J\033[1;%dr\033[H", rows-1)
 	s.drawPrompt()
 	return s
 }
@@ -63,8 +64,14 @@ func (s *screen) line(text string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// save cursor, jump to the last log row, scroll up with \n, print, restore
-	fmt.Printf("\0337\033[%d;1H\n%s\0338", s.rows-1, text)
+	if s.next <= s.rows-1 {
+		// region not full yet: write in place so logs grow from the top, no gap
+		fmt.Printf("\0337\033[%d;1H\033[K%s\0338", s.next, text)
+		s.next++
+	} else {
+		// region full: jump to the last log row, scroll up with \n, print
+		fmt.Printf("\0337\033[%d;1H\n%s\0338", s.rows-1, text)
+	}
 	s.drawPromptLocked()
 }
 
@@ -78,7 +85,7 @@ func (s *screen) drawPromptLocked() {
 	fmt.Printf("\033[%d;1H\033[K> %s", s.rows, s.buf)
 }
 
-// inputLoop reads landmark names. Each non-empty submission calls onLabel;
+// inputLoop reads landmark names. Each non-empty submission calls onLabel.
 // 'q'/'quit'/'exit', Ctrl-C, Ctrl-D or EOF call cancel and return.
 func (s *screen) inputLoop(cancel func(), onLabel func(string)) {
 	if s == nil {

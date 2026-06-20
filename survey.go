@@ -23,12 +23,6 @@ func survey(host, path string, port, upSecs int) {
 		fatal("No connected WiFi device found.")
 	}
 	checkHeader(path)
-	fmt.Printf("Survey on %s to %s, ~%ds per reading. Walk slowly.\n",
-		iface, host, downSecs+upSecs)
-	fmt.Println("Type a landmark name + Enter to tag your location, 'q' to stop.")
-	fmt.Println()
-	fmt.Printf("%-9s%-12s%-18s%7s%7s%8s%6s%6s%5s%5s  note\n",
-		"time", "where", "bssid", "down", "up", "rtt", "qual", "retr", "dBm", "%")
 
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -44,8 +38,15 @@ func survey(host, path string, port, upSecs int) {
 		w.Flush()
 	}
 
+	// Header goes through the screen too, so it fills from the top with no gap.
 	scr := newScreen()
 	defer scr.restore()
+	scr.line(fmt.Sprintf("Survey on %s to %s, ~%ds per reading. Walk slowly.",
+		iface, host, downSecs+upSecs))
+	scr.line("Type a landmark name + Enter to tag your location, 'q' to stop.")
+	scr.line("")
+	scr.line(fmt.Sprintf("%-9s%-12s%-18s%7s%7s%8s%6s%6s%5s%5s  note",
+		"time", "where", "bssid", "down", "up", "rtt", "qual", "retr", "dBm", "%"))
 
 	// Handle waypoint input on its own goroutine so labels register instantly
 	// and 'q' cancels the context, aborting any in-flight iperf3/ping.
@@ -76,6 +77,14 @@ func survey(host, path string, port, upSecs int) {
 		lat, latOK := latencyMs(ctx, host)
 		if ctx.Err() != nil {
 			break // quit mid-measurement: don't log a partial/aborted row
+		}
+		if !down.ok && !up.ok {
+			// server unreachable: iperf3 fails instantly, so don't spam empty
+			// rows. Warn and back off, the survey recovers if it comes back.
+			scr.line(fmt.Sprintf("%-9s(no response from %s:%d, retrying)",
+				now.Format("15:04:05"), host, port))
+			sleep(ctx, 5*time.Second)
+			continue
 		}
 		dbmCSV, pctCSV, pctDisp := "", "", "-"
 		if link.dbmOK {

@@ -224,14 +224,14 @@ func gnuplotScript(records [][]string, pdf string, meta map[string]string) strin
 	// overall averages across the whole survey, under the title
 	var parts []string
 	if g.downN > 0 {
-		parts = append(parts, fmt.Sprintf("down: %.0f", g.downSum/float64(g.downN)))
+		parts = append(parts, fmt.Sprintf("↓%.0f", g.downSum/float64(g.downN)))
 	}
 	if g.upN > 0 {
-		parts = append(parts, fmt.Sprintf("up: %.0f Mbps", g.upSum/float64(g.upN)))
+		parts = append(parts, fmt.Sprintf("↑%.0f Mbps", g.upSum/float64(g.upN)))
 	}
 	if g.dbmN > 0 {
 		avg := g.dbmSum / float64(g.dbmN)
-		parts = append(parts, fmt.Sprintf("dbm: %.0f (%d%%)", avg, dbmToPct(int(math.Round(avg)))))
+		parts = append(parts, fmt.Sprintf("%d%%", dbmToPct(int(math.Round(avg)))))
 	}
 	if g.rttN > 0 {
 		parts = append(parts, fmt.Sprintf("rtt: %s", rttGrade(g.rttSum/float64(g.rttN))))
@@ -403,26 +403,32 @@ set border lw 2
 		if s.label == "" || s.x1 <= s.x0 {
 			continue
 		}
-		// name on top, then two labelled stat lines: throughput, then signal/RTT
-		l1 := fmt.Sprintf("n: %d", s.n)
+		// compact labels so narrow (few-reading) bands don't overlap: reading
+		// count beside the name, arrows for down/up, signal as % only
+		var tp []string
 		if s.downN > 0 {
-			l1 += fmt.Sprintf(", down: %.0f", s.downSum/float64(s.downN))
+			tp = append(tp, fmt.Sprintf("↓%.0f", s.downSum/float64(s.downN)))
 		}
 		if s.upN > 0 {
-			l1 += fmt.Sprintf(", up: %.0f Mbps", s.upSum/float64(s.upN))
+			tp = append(tp, fmt.Sprintf("↑%.0f", s.upSum/float64(s.upN)))
 		}
-		l2 := ""
+		l1 := ""
+		if len(tp) > 0 {
+			l1 = strings.Join(tp, " ") + " Mbps"
+		}
+		var sp []string
 		if s.dbmN > 0 {
 			avg := s.dbmSum / float64(s.dbmN)
-			l2 = fmt.Sprintf("dbm: %.0f (%d%%)", avg, dbmToPct(int(math.Round(avg))))
+			sp = append(sp, fmt.Sprintf("%d%%", dbmToPct(int(math.Round(avg)))))
 		}
 		if s.rttN > 0 {
-			if l2 != "" {
-				l2 += ", "
-			}
-			l2 += fmt.Sprintf("rtt: %s", rttGrade(s.rttSum/float64(s.rttN)))
+			sp = append(sp, "rtt: "+rttGrade(s.rttSum/float64(s.rttN)))
 		}
-		txt := fmt.Sprintf("{/:Bold %s}\\n%s", gpEscape(s.label), l1)
+		l2 := strings.Join(sp, ", ")
+		txt := fmt.Sprintf("{/:Bold %s} (n %d)", gpEscape(s.label), s.n)
+		if l1 != "" {
+			txt += "\\n" + l1
+		}
 		if l2 != "" {
 			txt += "\\n" + l2
 		}

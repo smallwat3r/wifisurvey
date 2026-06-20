@@ -28,15 +28,14 @@ flowchart LR
             ap["WiFi access points<br/>(handovers as you walk)"]
         end
 
-        subgraph infra["Destination, a server we control in our chosen infra/region"]
-            srv["iperf3 server<br/>(iperf3 -s)"]
+        subgraph infra["Destination"]
+            srv["<div style='text-align:left'>iperf3 server (iperf3 -s)<br/>a server we control, in our chosen infra/region</div>"]
         end
     end
 
     dev <-- "WiFi link, read locally: signal, BSSID, roams (iw)" --> ap
-    ap -- "upload, loaded RTT, retransmits (iperf3)" --> srv
+    ap -- "upload, loaded RTT, retransmits (iperf3), latency (ping)" --> srv
     srv -- "download (iperf3)" --> ap
-    ap -. "latency (ping)" .-> srv
 ```
 
 Every measurement traverses the whole path: download (server to client) and

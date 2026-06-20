@@ -338,8 +338,4 @@ func TestSummarizeErrors(t *testing.T) {
 	if _, err := summarize([][]string{{"only", "header"}}); err != errNoData {
 		t.Errorf("header-only: err = %v, want errNoData", err)
 	}
-	old := [][]string{{"timestamp", "label", "ssid", "mbps"}, {"t", "x", "Y", "9"}}
-	if _, err := summarize(old); err != errOldFormat {
-		t.Errorf("old single-mbps format: err = %v, want errOldFormat", err)
-	}
 }

@@ -23,10 +23,7 @@ type spotStat struct {
 	avgDbm                 int
 }
 
-var (
-	errNoData    = errors.New("no data in CSV")
-	errOldFormat = errors.New("missing mbps_up column")
-)
+var errNoData = errors.New("no data in CSV")
 
 // summarize aggregates survey records (including the header row) into per-label
 // stats, sorted worst first by upload.
@@ -37,9 +34,6 @@ func summarize(records [][]string) ([]spotStat, error) {
 	col := map[string]int{}
 	for i, name := range records[0] {
 		col[name] = i
-	}
-	if _, ok := col["mbps_up"]; !ok {
-		return nil, errOldFormat
 	}
 	// get reads a named column safely, missing column or short row yields "".
 	get := func(r []string, name string) string {
@@ -131,11 +125,7 @@ func analyse(path string, minUp, minDown float64, graphPath string) {
 		fatal("No data in CSV.")
 	}
 	stats, err := summarize(records)
-	switch err {
-	case errOldFormat:
-		fatal(path + " is an old/different format (no 'mbps_up' column). " +
-			"Re-run survey with a fresh file.")
-	case errNoData:
+	if err == errNoData {
 		fatal("No data in CSV.")
 	}
 

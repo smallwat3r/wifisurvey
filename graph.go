@@ -10,16 +10,27 @@ import (
 	"time"
 )
 
+// green/yellow/red quality palette, shared by the dBm and RTT bars and their
+// legends. Stored as 0xRRGGBB ints for gnuplot's `lc rgb variable` data column,
+// rgb formats one as a "#RRGGBB" literal for static script text.
+const (
+	cGood = 0x1a9850 // green
+	cWarn = 0xe0c000 // yellow
+	cBad  = 0xcc0000 // red
+)
+
+func rgb(c int) string { return fmt.Sprintf("#%06x", c) }
+
 // rttColour maps a loaded RTT (ms) to a green/yellow/red 0xRRGGBB code for the
 // chart bar: good for real-time use, usable, then poor (matches rttGrade bands).
 func rttColour(ms float64) int {
 	switch {
 	case ms < 100:
-		return 0x1a9850
+		return cGood
 	case ms < 200:
-		return 0xe0c000
+		return cWarn
 	default:
-		return 0xcc0000
+		return cBad
 	}
 }
 
@@ -30,11 +41,11 @@ func rttColour(ms float64) int {
 func dbmColour(dbm float64) int {
 	switch {
 	case dbm >= -60:
-		return 0x1a9850
+		return cGood
 	case dbm >= -75:
-		return 0xe0c000
+		return cWarn
 	default:
-		return 0xcc0000
+		return cBad
 	}
 }
 
@@ -480,16 +491,16 @@ set border lw 2
 	if hasDbm {
 		// dBm strength key: three buckets matching the palette colours
 		elems = append(elems,
-			`  keyentry with lines lw 8 lc rgb "#1a9850" title "signal strong (>= -60 dBm)"`,
-			`  keyentry with lines lw 8 lc rgb "#e0c000" title "signal ok (-60 to -75)"`,
-			`  keyentry with lines lw 8 lc rgb "#cc0000" title "signal weak (< -75)"`)
+			fmt.Sprintf(`  keyentry with lines lw 8 lc rgb "%s" title "signal strong (>= -60 dBm)"`, rgb(cGood)),
+			fmt.Sprintf(`  keyentry with lines lw 8 lc rgb "%s" title "signal ok (-60 to -75)"`, rgb(cWarn)),
+			fmt.Sprintf(`  keyentry with lines lw 8 lc rgb "%s" title "signal weak (< -75)"`, rgb(cBad)))
 	}
 	if hasRtt {
 		// loaded RTT key: three buckets matching the bar colours
 		elems = append(elems,
-			`  keyentry with lines lw 8 lc rgb "#1a9850" title "RTT good (< 100 ms)"`,
-			`  keyentry with lines lw 8 lc rgb "#e0c000" title "RTT ok (100-200)"`,
-			`  keyentry with lines lw 8 lc rgb "#cc0000" title "RTT bad (>= 200)"`)
+			fmt.Sprintf(`  keyentry with lines lw 8 lc rgb "%s" title "RTT good (< 100 ms)"`, rgb(cGood)),
+			fmt.Sprintf(`  keyentry with lines lw 8 lc rgb "%s" title "RTT ok (100-200)"`, rgb(cWarn)),
+			fmt.Sprintf(`  keyentry with lines lw 8 lc rgb "%s" title "RTT bad (>= 200)"`, rgb(cBad)))
 	}
 	p("\nplot \\\n%s\n", strings.Join(elems, ", \\\n"))
 	return b.String()

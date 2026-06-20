@@ -1,5 +1,5 @@
 /wifisurvey
-/sample-survey.csv
+*.csv
 *.gp
 *.pdf
 *.out

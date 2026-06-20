@@ -7,11 +7,44 @@ the weak spots. Throughput is measured with iperf3 against a server you control,
 so the numbers reflect the actual path traffic takes to its destination rather
 than just the local link.
 
+The point is to measure the specific path you actually care about, from the
+client (your laptop, walking the site) to a specific server you control, sitting
+wherever your real traffic terminates. That can be on your LAN, but it is just
+as often outside the building entirely, a VM in the same cloud region and infra
+as the services you depend on. This way the survey reflects a concrete use case
+rather than an abstract link-quality reading. For example, if you are deploying
+an autonomous device or robot that streams up to, and pulls down from, services
+in a particular region, run the iperf3 server on that same infra and survey from
+the device's network: the weak spots you find are the ones that will actually
+hurt that deployment, including the wider path, not just the local WiFi.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph site["Building / site network"]
+        dev["Survey client (laptop or device)<br/>walks the site, runs wifisurvey<br/>logs throughput, signal, latency, roams"]
+        ap["WiFi access points<br/>(handovers as you walk)"]
+        dev -. WiFi link .-> ap
+    end
+
+    subgraph infra["External infra (your real destination)<br/>e.g. same cloud region as your services"]
+        srv["iperf3 server<br/>(iperf3 -s)"]
+    end
+
+    ap -- LAN / VPN / public path --> srv
+    srv -- download (server to client) --> dev
+    dev -- upload (client to server) --> srv
+```
+
+The client walks the site measuring the full end-to-end path to the server you
+control, not just the local link, so the weak spots reflect your actual traffic.
+
 ## Requirements
 
 - Linux with NetworkManager on the survey machine.
 - `nmcli`, `iw`, `ping`, `iperf3`.
-- Go 1.26+ to build (no external Go dependencies).
+- Go 1.26+ to build.
 - `gnuplot` (optional) to render `analyse --graph` into a figure.
 - A reachable **iperf3 server** (the `--host`), see below. For a cloud path
   this is a small VM, ideally in the same region as the service you care about.

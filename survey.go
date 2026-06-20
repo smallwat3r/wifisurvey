@@ -44,34 +44,28 @@ func survey(host, path string, port, upSecs int) {
 		w.Flush()
 	}
 
+	scr := newScreen()
+	defer scr.restore()
+
 	// Handle waypoint input on its own goroutine so labels register instantly
 	// and 'q' cancels the context, aborting any in-flight iperf3/ping.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var mu sync.Mutex
 	where := ""
-	go func() {
-		sc := bufio.NewScanner(os.Stdin)
-		for sc.Scan() {
-			line := strings.TrimSpace(sc.Text())
-			if line == "q" || line == "quit" || line == "exit" {
-				cancel()
-				return
-			}
-			mu.Lock()
-			where = line
-			mu.Unlock()
-			fmt.Printf("  -> %s\n", dashWord(line, "(cleared)"))
-		}
-		cancel() // stdin closed (Ctrl-D)
-	}()
+	go scr.inputLoop(cancel, func(line string) {
+		mu.Lock()
+		where = line
+		mu.Unlock()
+		scr.line("  -> " + line)
+	})
 
 	last := ""
 	for ctx.Err() == nil {
 		now := time.Now()
 		link := iwSignal(iface)
 		if link == nil {
-			fmt.Printf("%-9s(not connected to WiFi)\n", now.Format("15:04:05"))
+			scr.line(fmt.Sprintf("%-9s(not connected to WiFi)", now.Format("15:04:05")))
 			last = ""
 			sleep(ctx, time.Second)
 			continue
@@ -107,11 +101,12 @@ func survey(host, path string, port, upSecs int) {
 			link.bssid, dbmCSV, pctCSV, downCSV, upCSV, rttCSV, retrCSV, latCSV, note})
 		w.Flush()
 
-		fmt.Printf("%-9s%-12s%-18s%7s%7s%8s%6s%6s%5s%5s  %s\n", now.Format("15:04:05"),
+		scr.line(fmt.Sprintf("%-9s%-12s%-18s%7s%7s%8s%6s%6s%5s%5s  %s", now.Format("15:04:05"),
 			truncate(cur, 11), link.bssid, dash(downCSV), dash(upCSV),
-			dash(rttCSV), rttGrade(up.rttMs), dash(retrCSV), dash(dbmCSV), pctDisp, note)
+			dash(rttCSV), rttGrade(up.rttMs), dash(retrCSV), dash(dbmCSV), pctDisp, note))
 		last = link.bssid
 	}
+	scr.restore()
 	fmt.Printf("\nSaved to %s\n", path)
 }
 

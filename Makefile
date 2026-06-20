@@ -16,12 +16,12 @@ survey: $(BIN)
 analyse: $(BIN)
 	./$(BIN) analyse $(ARGS)
 
-# analyse then render the figure to PDF (needs gnuplot). e.g.
-# make plot CSV=survey.csv GRAPH=img/survey.gp
-CSV ?= survey.csv
+# analyse then render the figure to PDF (needs gnuplot). Defaults to the latest
+# survey CSV; override with e.g. make plot CSV=survey-2026-06-20_14-02.csv GRAPH=img/survey.gp
+CSV ?=
 GRAPH ?= survey.gp
 plot: $(BIN)
-	./$(BIN) analyse --csv $(CSV) --graph $(GRAPH)
+	./$(BIN) analyse $(if $(CSV),--csv $(CSV)) --graph $(GRAPH)
 	cd $(dir $(GRAPH)) && gnuplot $(notdir $(GRAPH))
 
 # regenerate the sample figure PDF from the local sample (needs gnuplot)

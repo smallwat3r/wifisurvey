@@ -5,7 +5,7 @@
 // just the local link.
 //
 //	go run wifisurvey.go survey --host HOST  # walk, label landmarks, 'q' to stop
-//	go run wifisurvey.go analyse [--min-up 5] # weak spots from survey.csv (by up Mbps)
+//	go run wifisurvey.go analyse [--min-up 5] # weak spots from latest survey CSV (by up Mbps)
 //
 // HOST is the iperf3 server (a hostname or IP). Run `iperf3 -s` there.
 // Each reading runs a download then an upload test, so it takes several seconds,
@@ -15,9 +15,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -31,6 +35,18 @@ const (
 func usage() {
 	fatal("usage:\n  wifisurvey survey  --host HOST [--port N] [--csv FILE] [--up-time SECS]\n" +
 		"  wifisurvey analyse [--csv FILE] [--min-up MBPS] [--min-down MBPS] [--graph FILE]")
+}
+
+// latestSurveyCSV returns the newest survey CSV in the working directory. The
+// timestamped names sort chronologically, so lexical max is the latest run.
+// Falls back to the bare default, which analyse reports as missing if absent.
+func latestSurveyCSV() string {
+	m, _ := filepath.Glob("survey*.csv")
+	if len(m) == 0 {
+		return csvPath
+	}
+	sort.Strings(m)
+	return m[len(m)-1]
 }
 
 // flagValue returns the value for --name (space- or =-separated), or def.
@@ -66,7 +82,13 @@ func main() {
 		if err != nil || port < 1 || port > 65535 {
 			fatal("--port must be a valid port (1-65535)")
 		}
-		survey(host, flagValue(args, "csv", csvPath), port, upSecs)
+		// default to a timestamped file so each walk is its own CSV, never
+		// appended to or overwriting a previous run
+		out := flagValue(args, "csv", "")
+		if out == "" {
+			out = fmt.Sprintf("survey-%s.csv", time.Now().Format("2006-01-02_15-04-05"))
+		}
+		survey(host, out, port, upSecs)
 	case "analyse":
 		minUp, err := strconv.ParseFloat(flagValue(args, "min-up", "5"), 64)
 		if err != nil {
@@ -76,8 +98,12 @@ func main() {
 		if err != nil {
 			fatal("--min-down must be a number")
 		}
-		analyse(flagValue(args, "csv", csvPath), minUp, minDown,
-			flagValue(args, "graph", ""))
+		// default to the most recent survey CSV, since runs are timestamped
+		in := flagValue(args, "csv", "")
+		if in == "" {
+			in = latestSurveyCSV()
+		}
+		analyse(in, minUp, minDown, flagValue(args, "graph", ""))
 	default:
 		usage()
 	}

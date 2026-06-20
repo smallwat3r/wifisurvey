@@ -22,21 +22,19 @@ func survey(host, path string, port, upSecs int) {
 	if iface == "" {
 		fatal("No connected WiFi device found.")
 	}
-	checkHeader(path)
-
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// fresh file each run (callers pass a timestamped name by default), so
+	// truncate rather than append: never mix two walks in one file
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		fatal(err.Error())
 	}
 	defer f.Close()
 	w := csv.NewWriter(f)
-	if info, _ := f.Stat(); info.Size() == 0 {
-		// metadata comment line (skipped on read) so the chart knows the target
-		fmt.Fprintf(f, "# host=%s port=%d streams=%d down=%ds up=%ds started=%s\n",
-			host, port, iperfStreams, downSecs, upSecs, time.Now().Format(time.RFC3339))
-		w.Write(fields)
-		w.Flush()
-	}
+	// metadata comment line (skipped on read) so the chart knows the target
+	fmt.Fprintf(f, "# host=%s port=%d streams=%d down=%ds up=%ds started=%s\n",
+		host, port, iperfStreams, downSecs, upSecs, time.Now().Format(time.RFC3339))
+	w.Write(fields)
+	w.Flush()
 
 	// Header goes through the screen too, so it fills from the top with no gap.
 	scr := newScreen()
@@ -117,24 +115,6 @@ func survey(host, path string, port, upSecs int) {
 	}
 	scr.restore()
 	fmt.Printf("\nSaved to %s\n", path)
-}
-
-// checkHeader refuses to append to a CSV written in a different column layout.
-func checkHeader(path string) {
-	f, err := os.Open(path)
-	if err != nil {
-		return // missing file is fine, it'll be created with a fresh header
-	}
-	defer f.Close()
-	r := bufio.NewReader(f)
-	header, _ := r.ReadString('\n')
-	for strings.HasPrefix(header, "#") { // skip the metadata line
-		header, _ = r.ReadString('\n')
-	}
-	if h := strings.TrimSpace(header); h != "" && h != strings.Join(fields, ",") {
-		fatal(path + " has an old/different column layout. " +
-			"Remove or rename it, then re-run.")
-	}
 }
 
 // csvMeta reads the leading "# key=value ..." comment line into a map, empty if

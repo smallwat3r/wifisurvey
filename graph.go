@@ -23,6 +23,21 @@ func rttColour(ms float64) int {
 	}
 }
 
+// dbmColour maps a signal strength (dBm) to a green/yellow/red 0xRRGGBB code by
+// absolute quality, matching the chart legend: strong >= -60, ok -60 to -75,
+// weak below. Absolute thresholds, not relative to the survey's own range, so a
+// uniformly strong survey reads as all green.
+func dbmColour(dbm float64) int {
+	switch {
+	case dbm >= -60:
+		return 0x1a9850
+	case dbm >= -75:
+		return 0xe0c000
+	default:
+		return 0xcc0000
+	}
+}
+
 // reading is one survey row reduced to down/up against wall-clock time (unix
 // seconds), plus the label and AP, for the time-series chart and its markers.
 type reading struct {
@@ -143,7 +158,6 @@ func gnuplotScript(records [][]string, pdf string, meta map[string]string) strin
 	w := func(s string) { b.WriteString(s) } // static text: no % or \n escaping
 
 	maxV := 0.0
-	minDbm, maxDbm := math.Inf(1), math.Inf(-1)
 	hasDbm := false
 	hasRtt := false
 	var g struct { // overall averages across every reading, shown under the title
@@ -161,7 +175,6 @@ func gnuplotScript(records [][]string, pdf string, meta map[string]string) strin
 		}
 		if r.hasDbm {
 			hasDbm = true
-			minDbm, maxDbm = math.Min(minDbm, r.dbm), math.Max(maxDbm, r.dbm)
 			g.dbmSum, g.dbmN = g.dbmSum+r.dbm, g.dbmN+1
 		}
 		if r.hasRtt {
@@ -261,12 +274,6 @@ set border lw 2
 		w(`set arrow from graph 0, first 0 to graph 1, first 0 nohead lc rgb "#888888" lw 1 front` + "\n")
 	}
 	w("set key tmargin right vertical maxrows 3\n\n")
-	if hasDbm {
-		// palette for the dBm bar: red (weak) -> yellow -> green (strong)
-		w(`set palette defined (0 "#cc0000", 0.5 "#e0c000", 1 "#1a9850")` + "\n")
-		p("set cbrange [%g:%g]\n", minDbm, maxDbm)
-		w("unset colorbox\n\n")
-	}
 	// BSSID labels are drawn in a bright-yellow, black-bordered box (matching
 	// the AP diamond marker)
 	w(`set style textbox opaque fillcolor rgb "#ffe000" border rgb "black" lw 1` + "\n\n")
@@ -304,10 +311,11 @@ set border lw 2
 		p("EOD\n\n")
 	}
 	if hasDbm {
+		// time + a discrete green/yellow/red colour by absolute signal quality
 		p("$dbm << EOD\n")
 		for _, r := range rs {
 			if r.hasDbm {
-				p("%d %g\n", int64(r.unix), r.dbm)
+				p("%d %d\n", int64(r.unix), dbmColour(r.dbm))
 			}
 		}
 		p("EOD\n\n")
@@ -366,8 +374,8 @@ set border lw 2
 	}
 	obj, shade := 1, 0
 	for _, s := range segs {
-		if s.label == "" || s.x1 <= s.x0 {
-			continue
+		if s.x1 <= s.x0 {
+			continue // zero-width band can't render
 		}
 		if shade%2 == 0 {
 			p("set object %d rectangle from %d, graph 0 to %d, graph 1 fc rgb \"#fcf6d8\" fs transparent solid 0.35 noborder behind\n",
@@ -400,8 +408,12 @@ set border lw 2
 	// location names emitted last so they draw on top of the AP boxes and bar,
 	// with reading count and the location's average signal under the name
 	for _, s := range segs {
-		if s.label == "" || s.x1 <= s.x0 {
-			continue
+		if s.x1 <= s.x0 {
+			continue // zero-width band can't render
+		}
+		name := s.label
+		if name == "" {
+			name = "(unspecified)" // unlabelled readings are a location of their own
 		}
 		// compact labels so narrow (few-reading) bands don't overlap: reading
 		// count beside the name, arrows for down/up, signal as % only
@@ -425,7 +437,7 @@ set border lw 2
 			sp = append(sp, "rtt: "+rttGrade(s.rttSum/float64(s.rttN)))
 		}
 		l2 := strings.Join(sp, ", ")
-		txt := fmt.Sprintf("{/:Bold %s} (n %d)", gpEscape(s.label), s.n)
+		txt := fmt.Sprintf("{/:Bold %s} (n %d)", gpEscape(name), s.n)
 		if l1 != "" {
 			txt += "\\n" + l1
 		}
@@ -444,8 +456,8 @@ set border lw 2
 
 	var elems []string
 	if hasDbm {
-		// dBm signal bar in the bottom strip, coloured red (weak) to green (strong)
-		elems = append(elems, fmt.Sprintf(`  $dbm using 1:(%g):2 with lines lw 8 lc palette notitle`, yDbm))
+		// dBm signal bar in the bottom strip, green/yellow/red by quality (own colour column)
+		elems = append(elems, fmt.Sprintf(`  $dbm using 1:(%g):2 with lines lw 8 lc rgb variable notitle`, yDbm))
 	}
 	if hasRtt {
 		// loaded RTT bar below it, green/yellow/red by quality (own colour column)

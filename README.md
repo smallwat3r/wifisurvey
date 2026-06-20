@@ -85,7 +85,9 @@ Flags:
 
 - `--host HOST` iperf3 server, a hostname or IP (required).
 - `--port N` iperf3 server port (default 5201, match `iperf3 -s -p N`).
-- `--csv FILE` output file (default `survey.csv`).
+- `--csv FILE` output file (default `survey-<datetime>.csv`, a fresh file per
+  run so walks are never appended together or overwritten). An explicit `FILE`
+  that already exists is overwritten.
 - `--up-time SECS` seconds for the upload test (default 3). The download test
   is a fixed 3s, it has headroom and settles instantly. On a congested or
   bufferbloated path a longer upload test rarely beats the run-to-run noise, so
@@ -127,7 +129,7 @@ matters when a device is sending data out, such as streaming).
 
 Flags:
 
-- `--csv FILE` input file (default `survey.csv`).
+- `--csv FILE` input file (default: the most recent `survey-*.csv`).
 - `--min-up MBPS` weak upload threshold in Mbps (default 5). A spot is flagged
   `WEAK` when its **average** upload falls below this. Spots where the upload
   test never succeeded show `no up` and are counted as weak.

@@ -31,7 +31,7 @@ func newScreen() *screen {
 		return nil
 	}
 	_, rows, err := term.GetSize(fd)
-	if err != nil || rows < 3 {
+	if err != nil || rows < 4 {
 		return nil
 	}
 	old, err := term.MakeRaw(fd)
@@ -39,8 +39,9 @@ func newScreen() *screen {
 		return nil
 	}
 	s := &screen{rows: rows, next: 1, oldState: old}
-	// clear, then scroll region = rows 1..rows-1, last row reserved for the prompt
-	fmt.Printf("\033[2J\033[1;%dr\033[H", rows-1)
+	// clear, then scroll region = rows 1..rows-2. The bottom two rows are
+	// reserved: rows-1 for the transient activity line, rows for the prompt.
+	fmt.Printf("\033[2J\033[1;%dr\033[H", rows-2)
 	s.drawPrompt()
 	return s
 }
@@ -64,15 +65,28 @@ func (s *screen) line(text string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.next <= s.rows-1 {
+	if s.next <= s.rows-2 {
 		// region not full yet: write in place so logs grow from the top, no gap
 		fmt.Printf("\0337\033[%d;1H\033[K%s\0338", s.next, text)
 		s.next++
 	} else {
 		// region full: jump to the last log row, scroll up with \n, print
-		fmt.Printf("\0337\033[%d;1H\n%s\0338", s.rows-1, text)
+		fmt.Printf("\0337\033[%d;1H\n%s\0338", s.rows-2, text)
 	}
 	s.drawPromptLocked()
+}
+
+// status shows a transient activity line (which probe is running) on the row
+// reserved just above the prompt. It is overwritten in place, never logged, so
+// a hang leaves the current stage on screen without cluttering the history. A
+// nil screen (headless) drops it: the readings carry no such status anyway.
+func (s *screen) status(text string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fmt.Printf("\0337\033[%d;1H\033[K%s\0338", s.rows-1, text)
 }
 
 func (s *screen) drawPrompt() {
@@ -102,7 +116,8 @@ func (s *screen) inputLoop(cancel func(), onLabel func(string)) {
 	for {
 		b, err := r.ReadByte()
 		if err != nil {
-			cancel()
+			// stdin hiccup (EOF, sleep/wake): stop reading labels but keep
+			// surveying. Only q/quit/exit or Ctrl-C/D (below) end a run.
 			return
 		}
 		switch {

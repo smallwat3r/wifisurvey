@@ -416,6 +416,17 @@ set border lw 2
 	hasAP := ap.Len() > 0
 	p("$ap << EOD\n%sEOD\n\n", ap.String())
 
+	// connectivity gaps: rows with no throughput (no WiFi, or host unreachable).
+	// Marked with a cross on the zero line so dead spots are obvious at a glance.
+	var outage strings.Builder
+	for _, r := range rs {
+		if !r.hasDown && !r.hasUp {
+			fmt.Fprintf(&outage, "%d 0\n", int64(r.unix))
+		}
+	}
+	hasOutage := outage.Len() > 0
+	p("$outage << EOD\n%sEOD\n\n", outage.String())
+
 	// location names emitted last so they draw on top of the AP boxes and bar,
 	// with reading count and the location's average signal under the name
 	for _, s := range segs {
@@ -487,6 +498,12 @@ set border lw 2
 			`  $ap using 1:2 with points pt 13 ps 1.3 lc rgb "black" notitle`,
 			`  $ap using 1:2 with points pt 13 ps 0.9 lc rgb "#ffe000" notitle`,
 			`  keyentry with points pt 13 ps 1.3 lc rgb "#ffe000" title "AP switch"`)
+	}
+	if hasOutage {
+		// red crosses on the zero line where there was no usable connection
+		elems = append(elems,
+			fmt.Sprintf(`  $outage using 1:2 with points pt 2 ps 0.7 lc rgb "%s" notitle`, rgb(cBad)),
+			fmt.Sprintf(`  keyentry with points pt 2 ps 0.9 lc rgb "%s" title "no connection"`, rgb(cBad)))
 	}
 	if hasDbm {
 		// dBm strength key: three buckets matching the palette colours

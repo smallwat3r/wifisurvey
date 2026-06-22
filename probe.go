@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // run executes a command and returns stdout, ignoring a non-zero exit.
@@ -47,8 +48,11 @@ var (
 )
 
 // iwSignal returns the connected AP via `iw dev link`, or nil if not associated.
+// Capped so a wedged netlink call can't freeze the survey between readings.
 func iwSignal(iface string) *signal {
-	return parseIwLink(run("iw", "dev", iface, "link"))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return parseIwLink(runCtx(ctx, "iw", "dev", iface, "link"))
 }
 
 // parseIwLink extracts the connected AP from `iw dev link` output. This regex
@@ -116,6 +120,12 @@ func iperf(ctx context.Context, host string, port int, reverse bool, secs int) i
 	if reverse {
 		args = append(args, "-R")
 	}
+	// hard ceiling so a stalled transfer (mid-roam, wedged control connection)
+	// can't hang the survey forever: test length plus setup/teardown headroom.
+	// On timeout the command is killed, parseIperf reports !ok, and the loop
+	// recovers via its retry path rather than blocking on a dead reading.
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(secs+10)*time.Second)
+	defer cancel()
 	return parseIperf(runCtx(ctx, "iperf3", args...))
 }
 

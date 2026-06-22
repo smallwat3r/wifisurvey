@@ -59,28 +59,50 @@ func survey(host, path string, port, upSecs int) {
 		scr.line("  -> " + line)
 	})
 
+	// logEvent records a connectivity gap (no WiFi, or host unreachable) as its
+	// own row, with empty throughput, so the outage shows up in analyse and on
+	// the chart rather than silently vanishing between good readings.
+	logEvent := func(t time.Time, ssid, bssid, dbm, pct, note string) {
+		mu.Lock()
+		cur := where
+		mu.Unlock()
+		w.Write([]string{t.Format("2006-01-02 15:04:05"), cur, ssid, bssid,
+			dbm, pct, "", "", "", "", "", note})
+		w.Flush()
+	}
+
 	last := ""
 	for ctx.Err() == nil {
 		now := time.Now()
 		link := iwSignal(iface)
 		if link == nil {
 			scr.line(fmt.Sprintf("%-9s(not connected to WiFi)", now.Format("15:04:05")))
+			logEvent(now, "", "", "", "", "no wifi")
 			last = ""
 			sleep(ctx, time.Second)
 			continue
 		}
 
+		scr.status("probing down ...")
 		down := iperf(ctx, host, port, true, downSecs)
+		scr.status("probing up ...")
 		up := iperf(ctx, host, port, false, upSecs)
+		scr.status("pinging ...")
 		lat, latOK := latencyMs(ctx, host)
 		if ctx.Err() != nil {
 			break // quit mid-measurement: don't log a partial/aborted row
 		}
 		if !down.ok && !up.ok {
-			// server unreachable: iperf3 fails instantly, so don't spam empty
-			// rows. Warn and back off, the survey recovers if it comes back.
+			// server unreachable: iperf3 fails instantly. Log it (signal was
+			// fine, the host wasn't), warn and back off; recovers if it returns.
 			scr.line(fmt.Sprintf("%-9s(no response from %s:%d, retrying)",
 				now.Format("15:04:05"), host, port))
+			dbm, pct := "", ""
+			if link.dbmOK {
+				dbm = strconv.Itoa(link.dbm)
+				pct = strconv.Itoa(dbmToPct(link.dbm))
+			}
+			logEvent(now, link.ssid, link.bssid, dbm, pct, "no response")
 			sleep(ctx, 5*time.Second)
 			continue
 		}
@@ -111,6 +133,7 @@ func survey(host, path string, port, upSecs int) {
 		scr.line(fmt.Sprintf("%-9s%-12s%-18s%7s%7s%8s%6s%6s%5s%5s  %s", now.Format("15:04:05"),
 			truncate(cur, 11), link.bssid, dash(downCSV), dash(upCSV),
 			dash(rttCSV), rttGrade(up.rttMs), dash(retrCSV), dash(dbmCSV), pctDisp, note))
+		scr.status("") // reading logged: blank the activity bar until the next probe
 		last = link.bssid
 	}
 	scr.restore()

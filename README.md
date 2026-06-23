@@ -78,8 +78,8 @@ make survey ARGS="--host <vm-name-or-ip>"
 Connect the survey machine to the network you want to test, and make sure the
 iperf3 server is running. Each reading runs a download then an upload test, so
 it takes several seconds, walk slowly and pause at each spot. Type a landmark
-name and press Enter to tag the following readings, type `q` (then Enter) to
-stop.
+name and press Enter to tag the following readings. Type `p` to pause readings
+and `r` to resume, type `q` (then Enter) to stop.
 
 Flags:
 

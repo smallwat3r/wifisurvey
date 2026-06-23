@@ -101,11 +101,11 @@ func (s *screen) drawPromptLocked() {
 
 // inputLoop reads landmark names. Each non-empty submission calls onLabel.
 // 'q'/'quit'/'exit', Ctrl-C, Ctrl-D or EOF call cancel and return.
-func (s *screen) inputLoop(cancel func(), onLabel func(string)) {
+func (s *screen) inputLoop(cancel func(), pause func(bool), onLabel func(string)) {
 	if s == nil {
 		sc := bufio.NewScanner(os.Stdin)
 		for sc.Scan() {
-			if !dispatch(sc.Text(), cancel, onLabel) {
+			if !dispatch(sc.Text(), cancel, pause, onLabel) {
 				return
 			}
 		}
@@ -130,7 +130,7 @@ func (s *screen) inputLoop(cancel func(), onLabel func(string)) {
 			s.buf = s.buf[:0]
 			s.drawPromptLocked()
 			s.mu.Unlock()
-			if !dispatch(line, cancel, onLabel) {
+			if !dispatch(line, cancel, pause, onLabel) {
 				return
 			}
 		case b == 127 || b == 8: // backspace / DEL
@@ -153,11 +153,17 @@ func (s *screen) inputLoop(cancel func(), onLabel func(string)) {
 }
 
 // dispatch acts on a submitted line. Returns false to stop the input loop.
-func dispatch(line string, cancel func(), onLabel func(string)) bool {
+func dispatch(line string, cancel func(), pause func(bool), onLabel func(string)) bool {
 	switch strings.TrimSpace(line) {
 	case "q", "quit", "exit":
 		cancel()
 		return false
+	case "p", "pause":
+		pause(true)
+		return true
+	case "r", "resume":
+		pause(false)
+		return true
 	case "":
 		return true // bare Enter: ignore, don't clear the current label
 	default:

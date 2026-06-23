@@ -339,3 +339,41 @@ func TestSummarizeErrors(t *testing.T) {
 		t.Errorf("header-only: err = %v, want errNoData", err)
 	}
 }
+
+func TestDispatch(t *testing.T) {
+	cases := []struct {
+		line       string
+		wantCont   bool // dispatch returns true (keep reading)
+		wantCancel bool
+		wantPause  string // "", "true" or "false"
+		wantLabel  string
+	}{
+		{"q", false, true, "", ""},
+		{"quit", false, true, "", ""},
+		{"exit", false, true, "", ""},
+		{"p", true, false, "true", ""},
+		{"pause", true, false, "true", ""},
+		{"r", true, false, "false", ""},
+		{"resume", true, false, "false", ""},
+		{"", true, false, "", ""},             // bare Enter ignored
+		{"  desk  ", true, false, "", "desk"}, // trimmed label
+	}
+	for _, c := range cases {
+		cancelled, pause, label := false, "", ""
+		cont := dispatch(c.line,
+			func() { cancelled = true },
+			func(p bool) {
+				if p {
+					pause = "true"
+				} else {
+					pause = "false"
+				}
+			},
+			func(l string) { label = l })
+		if cont != c.wantCont || cancelled != c.wantCancel || pause != c.wantPause || label != c.wantLabel {
+			t.Errorf("dispatch(%q) = cont %v cancel %v pause %q label %q; want %v %v %q %q",
+				c.line, cont, cancelled, pause, label,
+				c.wantCont, c.wantCancel, c.wantPause, c.wantLabel)
+		}
+	}
+}

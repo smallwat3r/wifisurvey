@@ -41,7 +41,7 @@ func survey(host, path string, port, upSecs int) {
 	defer scr.restore()
 	scr.line(fmt.Sprintf("Survey on %s to %s, ~%ds per reading. Walk slowly.",
 		iface, host, downSecs+upSecs))
-	scr.line("Type a landmark name + Enter to tag your location, 'q' to stop.")
+	scr.line("Type a landmark name + Enter to tag your location, 'p'/'r' pause/resume, 'q' to stop.")
 	scr.line("")
 	scr.line(fmt.Sprintf("%-9s%-12s%-18s%7s%7s%8s%6s%6s%5s%5s  note",
 		"time", "where", "bssid", "down", "up", "rtt", "qual", "retr", "dBm", "%"))
@@ -52,7 +52,17 @@ func survey(host, path string, port, upSecs int) {
 	defer cancel()
 	var mu sync.Mutex
 	where := ""
-	go scr.inputLoop(cancel, func(line string) {
+	paused := false
+	go scr.inputLoop(cancel, func(p bool) {
+		mu.Lock()
+		paused = p
+		mu.Unlock()
+		if p {
+			scr.line("  -- paused, type 'r' to resume")
+		} else {
+			scr.line("  -- resumed")
+		}
+	}, func(line string) {
 		mu.Lock()
 		where = line
 		mu.Unlock()
@@ -73,6 +83,13 @@ func survey(host, path string, port, upSecs int) {
 
 	last := ""
 	for ctx.Err() == nil {
+		mu.Lock()
+		isPaused := paused
+		mu.Unlock()
+		if isPaused {
+			sleep(ctx, 300*time.Millisecond) // idle until 'r', cheap poll
+			continue
+		}
 		now := time.Now()
 		link := iwSignal(iface)
 		if link == nil {

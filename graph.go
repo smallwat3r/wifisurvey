@@ -235,14 +235,22 @@ func gnuplotScript(records [][]string, pdf string, meta map[string]string) strin
 	p("set terminal pdfcairo enhanced size 9in,5in font \"Helvetica,11\"\n")
 	p("set output '%s'\n\n", pdf)
 	p("unset title\n")
-	// title, with the iperf3 target from the survey metadata if present
+	// title, with the iperf3 target and source CSV from the survey metadata,
+	// both in one parenthesised group so they read as a consistent subtitle
 	title := "Throughput over time"
+	var sub []string
 	if h := meta["host"]; h != "" {
-		tgt := "iperf3 " + h
+		tgt := "vs iperf3 " + h
 		if port := meta["port"]; port != "" {
 			tgt += ":" + port
 		}
-		title += fmt.Sprintf("  {/*0.7 (vs %s)}", tgt)
+		sub = append(sub, tgt)
+	}
+	if src := meta["source"]; src != "" {
+		sub = append(sub, gpEscape(src))
+	}
+	if len(sub) > 0 {
+		title += fmt.Sprintf("  {/*0.7 (%s)}", strings.Join(sub, " · "))
 	}
 	p("set label \"%s\" at screen 0.015, screen 0.965 left font \"Helvetica,13\"\n", title)
 	// overall averages across the whole survey, under the title
@@ -255,10 +263,11 @@ func gnuplotScript(records [][]string, pdf string, meta map[string]string) strin
 	}
 	if g.dbmN > 0 {
 		avg := g.dbmSum / float64(g.dbmN)
-		parts = append(parts, fmt.Sprintf("%d%%", dbmToPct(int(math.Round(avg)))))
+		parts = append(parts, fmt.Sprintf("signal: %d%%", dbmToPct(int(math.Round(avg)))))
 	}
 	if g.rttN > 0 {
-		parts = append(parts, fmt.Sprintf("rtt: %s", rttGrade(g.rttSum/float64(g.rttN))))
+		avg := g.rttSum / float64(g.rttN)
+		parts = append(parts, fmt.Sprintf("rtt: %s (%.0f ms)", rttGrade(avg), avg))
 	}
 	overall := "global: " + strings.Join(parts, ", ")
 	p("set label \"%s\" at screen 0.015, screen 0.94 left font \",9\" tc rgb \"black\"\n", overall)
@@ -330,12 +339,12 @@ set border lw 2
 			}
 		}
 		p("EOD\n\n")
-		// name the bar at its right-hand end
-		p("set label \"signal (dBm)\" at %d, %g right offset 0,-1 tc rgb \"#333333\" font \",8\"\n\n",
+		// name the bar just past its right-hand end, level with the bar
+		p("set label \"signal (dBm)\" at %d, %g left offset 1,0 tc rgb \"#333333\" font \",8\"\n\n",
 			lastX, yDbm)
 	}
 	if hasRtt {
-		p("set label \"RTT (ms)\" at %d, %g right offset 0,-1 tc rgb \"#333333\" font \",8\"\n\n",
+		p("set label \"RTT (ms)\" at %d, %g left offset 1,0 tc rgb \"#333333\" font \",8\"\n\n",
 			lastX, yRtt)
 	}
 
@@ -398,18 +407,27 @@ set border lw 2
 
 	// AP change: a diamond on the signal bar, the BSSID named just above it.
 	// The first reading's AP is marked too.
-	yBox := "graph 0.93"
+	// alternate AP labels above the bar then below the diamond, so two switches
+	// close in time don't print their names on top of each other
+	yAbove, yBelow := "graph 0.93", "graph 0.86"
 	if nBar > 0 {
-		yBox = fmt.Sprintf("%g", yName)
+		yAbove = fmt.Sprintf("%g", yName)
+		yBelow = fmt.Sprintf("%g", yAP)
 	}
 	var ap strings.Builder
 	prevBssid := ""
+	nAP := 0
 	for _, r := range rs {
 		if r.bssid != "" && r.bssid != prevBssid {
 			t := int64(r.unix)
 			fmt.Fprintf(&ap, "%d %g\n", t, yAP)
-			p("set label \"%s\" at %d, %s center boxed tc rgb \"black\" font \",7\"\n",
-				gpEscape(r.bssid), t, yBox)
+			y, off := yAbove, "0,0"
+			if nAP%2 == 1 {
+				y, off = yBelow, "0,-1.2" // drop below the diamond
+			}
+			p("set label \"%s\" at %d, %s center boxed offset %s tc rgb \"black\" font \",7\"\n",
+				gpEscape(r.bssid), t, y, off)
+			nAP++
 		}
 		prevBssid = r.bssid
 	}
@@ -450,28 +468,28 @@ set border lw 2
 		if len(tp) > 0 {
 			l1 = strings.Join(tp, " ") + " Mbps"
 		}
-		var sp []string
+		// signal and rtt each on their own line so narrow bands stay compact
+		l2 := ""
 		if s.dbmN > 0 {
-			avg := s.dbmSum / float64(s.dbmN)
-			sp = append(sp, fmt.Sprintf("%d%%", dbmToPct(int(math.Round(avg)))))
+			l2 = fmt.Sprintf("signal: %d%%", dbmToPct(int(math.Round(s.dbmSum/float64(s.dbmN)))))
 		}
+		l3 := ""
 		if s.rttN > 0 {
-			sp = append(sp, "rtt: "+rttGrade(s.rttSum/float64(s.rttN)))
+			avg := s.rttSum / float64(s.rttN)
+			l3 = fmt.Sprintf("rtt: %s (%.0f ms)", rttGrade(avg), avg)
 		}
-		l2 := strings.Join(sp, ", ")
-		txt := fmt.Sprintf("{/:Bold %s} (n %d)", gpEscape(name), s.n)
-		if l1 != "" {
-			txt += "\\n" + l1
-		}
-		if l2 != "" {
-			txt += "\\n" + l2
+		txt := fmt.Sprintf("{/:Bold %s}", gpEscape(name))
+		for _, l := range []string{fmt.Sprintf("#%d", s.n), l1, l2, l3} {
+			if l != "" {
+				txt += "\\n" + l
+			}
 		}
 		// in the strip above the signal bar when there is one, else top of plot
 		yLab := "graph 0.95"
 		if nBar > 0 {
 			yLab = fmt.Sprintf("%g", yLoc)
 		}
-		p("set label \"%s\" at %d, %s center tc rgb \"#8a6d00\" font \",8\"\n",
+		p("set label \"%s\" at %d, %s center tc rgb \"#8a6d00\" font \",5\"\n",
 			txt, (s.x0+s.x1)/2, yLab)
 	}
 	p("\n")

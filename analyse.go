@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -165,7 +166,12 @@ func analyse(path string, minUp, minDown float64, graphPath string) {
 	fmt.Printf("\n%d weak/unmeasured spot(s) below %s: %s\n",
 		len(weak), crit, dashWord(strings.Join(weak, ", "), "none"))
 	if graphPath != "" {
-		graph(graphPath, records, csvMeta(path))
+		meta := csvMeta(path)
+		if meta == nil {
+			meta = map[string]string{}
+		}
+		meta["source"] = filepath.Base(path)
+		graph(graphPath, records, meta)
 	}
 }
 

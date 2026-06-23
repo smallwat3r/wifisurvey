@@ -158,6 +158,146 @@ func gpEscape(s string) string {
 	return s
 }
 
+// surveyStats holds the whole-survey averages shown under the title, plus the
+// largest throughput so the chart can size its y-axis.
+type surveyStats struct {
+	downSum, upSum, dbmSum, rttSum float64
+	downN, upN, dbmN, rttN         int
+	maxV                           float64 // largest down/up, for the y-axis top
+}
+
+// computeStats aggregates every reading into the survey-wide totals.
+func computeStats(rs []reading) surveyStats {
+	var s surveyStats
+	for _, r := range rs {
+		if r.hasDown {
+			s.maxV = math.Max(s.maxV, r.down)
+			s.downSum, s.downN = s.downSum+r.down, s.downN+1
+		}
+		if r.hasUp {
+			s.maxV = math.Max(s.maxV, r.up)
+			s.upSum, s.upN = s.upSum+r.up, s.upN+1
+		}
+		if r.hasDbm {
+			s.dbmSum, s.dbmN = s.dbmSum+r.dbm, s.dbmN+1
+		}
+		if r.hasRtt {
+			s.rttSum, s.rttN = s.rttSum+r.rtt, s.rttN+1
+		}
+	}
+	return s
+}
+
+// summaryLine renders the "global: ..." averages line under the title.
+func (s surveyStats) summaryLine() string {
+	var parts []string
+	if s.downN > 0 {
+		parts = append(parts, fmt.Sprintf("↓%.0f", s.downSum/float64(s.downN)))
+	}
+	if s.upN > 0 {
+		parts = append(parts, fmt.Sprintf("↑%.0f Mbps", s.upSum/float64(s.upN)))
+	}
+	if s.dbmN > 0 {
+		avg := s.dbmSum / float64(s.dbmN)
+		parts = append(parts, fmt.Sprintf("signal: %d%%", dbmToPct(int(math.Round(avg)))))
+	}
+	if s.rttN > 0 {
+		avg := s.rttSum / float64(s.rttN)
+		parts = append(parts, fmt.Sprintf("rtt: %s (%.0f ms)", rttGrade(avg), avg))
+	}
+	return "global: " + strings.Join(parts, ", ")
+}
+
+// layout holds the y-positions of the bottom strip that stacks (top to bottom):
+// per-location stats block, BSSID box, then the signal/RTT bars, all in negative
+// y below the data so nothing overlays the throughput lines.
+type layout struct {
+	nBar                   int     // number of bars in the strip (dBm, RTT)
+	band                   float64 // strip height in data units
+	yLoc                   float64 // per-location name + averages
+	yName, yDbm, yRtt, yAP float64 // BSSID box, signal bar, RTT bar, AP diamond
+}
+
+// computeLayout places the strip elements for the bars present.
+func computeLayout(yMax float64, hasDbm, hasRtt bool) layout {
+	var l layout
+	if hasDbm {
+		l.nBar++
+	}
+	if hasRtt {
+		l.nBar++
+	}
+	switch l.nBar {
+	case 2:
+		l.band = yMax * 0.46
+	case 1:
+		l.band = yMax * 0.32
+	}
+	l.yLoc = -l.band * 0.16
+	switch {
+	case l.nBar == 2:
+		l.yName, l.yDbm, l.yRtt = -l.band*0.49, -l.band*0.61, -l.band*0.85
+	case hasDbm:
+		l.yName, l.yDbm = -l.band*0.58, -l.band*0.80
+	case hasRtt:
+		l.yName, l.yRtt = -l.band*0.58, -l.band*0.80
+	}
+	l.yAP = l.yDbm // AP-switch diamonds ride the dBm bar (or RTT bar if no signal)
+	if !hasDbm {
+		l.yAP = l.yRtt
+	}
+	return l
+}
+
+// seg is one contiguous run of readings sharing a location label, with the
+// averages shown in that location's stats block.
+type seg struct {
+	label          string
+	x0, x1         int64
+	n              int     // readings in this location
+	downSum, upSum float64 // average throughput shown by the name
+	downN, upN     int
+	dbmSum         float64 // average signal shown by the name
+	dbmN           int
+	rttSum         float64 // average RTT quality shown by the name
+	rttN           int
+}
+
+// locationSegments groups consecutive same-label readings into bands.
+func locationSegments(rs []reading) []seg {
+	var segs []seg
+	for i, r := range rs {
+		if i == 0 || r.label != rs[i-1].label {
+			if n := len(segs); n > 0 {
+				segs[n-1].x1 = int64(r.unix)
+			}
+			segs = append(segs, seg{label: r.label, x0: int64(r.unix), x1: int64(r.unix)})
+		}
+		s := &segs[len(segs)-1]
+		s.n++
+		if r.hasDown {
+			s.downSum += r.down
+			s.downN++
+		}
+		if r.hasUp {
+			s.upSum += r.up
+			s.upN++
+		}
+		if r.hasDbm {
+			s.dbmSum += r.dbm
+			s.dbmN++
+		}
+		if r.hasRtt {
+			s.rttSum += r.rtt
+			s.rttN++
+		}
+	}
+	if n := len(segs); n > 0 {
+		segs[n-1].x1 = int64(rs[len(rs)-1].unix)
+	}
+	return segs
+}
+
 // gnuplotScript builds the self-contained gnuplot script: throughput over time
 // on a linear Mbps axis, faint down/up scatter with bold trend lines, shaded
 // location bands with per-location and overall averages, and a bottom strip of
@@ -168,67 +308,18 @@ func gnuplotScript(records [][]string, pdf string, meta map[string]string) strin
 	p := func(format string, a ...any) { fmt.Fprintf(&b, format, a...) }
 	w := func(s string) { b.WriteString(s) } // static text: no % or \n escaping
 
-	maxV := 0.0
-	hasDbm := false
-	hasRtt := false
-	var g struct { // overall averages across every reading, shown under the title
-		downSum, upSum, dbmSum, rttSum float64
-		downN, upN, dbmN, rttN         int
-	}
-	for _, r := range rs {
-		if r.hasDown {
-			maxV = math.Max(maxV, r.down)
-			g.downSum, g.downN = g.downSum+r.down, g.downN+1
-		}
-		if r.hasUp {
-			maxV = math.Max(maxV, r.up)
-			g.upSum, g.upN = g.upSum+r.up, g.upN+1
-		}
-		if r.hasDbm {
-			hasDbm = true
-			g.dbmSum, g.dbmN = g.dbmSum+r.dbm, g.dbmN+1
-		}
-		if r.hasRtt {
-			hasRtt = true
-			g.rttSum, g.rttN = g.rttSum+r.rtt, g.rttN+1
-		}
-	}
-	yMax := math.Ceil(maxV/10) * 10
+	st := computeStats(rs)
+	hasDbm, hasRtt := st.dbmN > 0, st.rttN > 0
+	yMax := math.Ceil(st.maxV/10) * 10
 	if yMax == 0 {
 		yMax = 10
 	}
 	// the signal/RTT bars live in a reserved strip below the data (negative y),
 	// so they sit above the time axis without overlaying the throughput lines
-	nBar := 0
-	if hasDbm {
-		nBar++
-	}
-	if hasRtt {
-		nBar++
-	}
-	// the strip stacks (top to bottom): per-location stats block, BSSID box, then
-	// the signal/RTT bars, all below the data so nothing overlays the throughput
-	band := 0.0
-	switch nBar {
-	case 2:
-		band = yMax * 0.46
-	case 1:
-		band = yMax * 0.32
-	}
-	yLoc := -band * 0.16 // per-location name + averages, upper strip
-	yName, yDbm, yRtt := 0.0, 0.0, 0.0
-	switch {
-	case nBar == 2:
-		yName, yDbm, yRtt = -band*0.49, -band*0.61, -band*0.85
-	case hasDbm:
-		yName, yDbm = -band*0.58, -band*0.80
-	case hasRtt:
-		yName, yRtt = -band*0.58, -band*0.80
-	}
-	yAP := yDbm // AP-switch diamonds ride the dBm bar (or RTT bar if no signal)
-	if !hasDbm {
-		yAP = yRtt
-	}
+	lay := computeLayout(yMax, hasDbm, hasRtt)
+	band, nBar := lay.band, lay.nBar
+	yLoc, yName, yDbm, yRtt, yAP := lay.yLoc, lay.yName, lay.yDbm, lay.yRtt, lay.yAP
+
 	lastX := int64(rs[len(rs)-1].unix)
 	firstX := int64(rs[0].unix)
 	// pad both ends of the x-axis: the right so the "signal (dBm)" / "RTT (ms)"
@@ -263,23 +354,8 @@ func gnuplotScript(records [][]string, pdf string, meta map[string]string) strin
 	}
 	p("set label \"%s\" at screen 0.015, screen 0.965 left font \"Helvetica,13\"\n", title)
 	// overall averages across the whole survey, under the title
-	var parts []string
-	if g.downN > 0 {
-		parts = append(parts, fmt.Sprintf("↓%.0f", g.downSum/float64(g.downN)))
-	}
-	if g.upN > 0 {
-		parts = append(parts, fmt.Sprintf("↑%.0f Mbps", g.upSum/float64(g.upN)))
-	}
-	if g.dbmN > 0 {
-		avg := g.dbmSum / float64(g.dbmN)
-		parts = append(parts, fmt.Sprintf("signal: %d%%", dbmToPct(int(math.Round(avg)))))
-	}
-	if g.rttN > 0 {
-		avg := g.rttSum / float64(g.rttN)
-		parts = append(parts, fmt.Sprintf("rtt: %s (%.0f ms)", rttGrade(avg), avg))
-	}
-	overall := "global: " + strings.Join(parts, ", ")
-	p("set label \"%s\" at screen 0.015, screen 0.94 left font \",9\" tc rgb \"black\"\n", overall)
+	p("set label \"%s\" at screen 0.015, screen 0.94 left font \",9\" tc rgb \"black\"\n",
+		st.summaryLine())
 	// footer explaining the metrics, in the reserved space below the axis. The
 	// \n are literal (rendered line breaks in the label), the % is literal too.
 	p("set bmargin at screen 0.20\n")
@@ -361,47 +437,7 @@ set border lw 2
 	// locations are regions, so shade each contiguous one as a faint band
 	// (behind the data, alternating ones tinted) and name it in the middle,
 	// clearer than a boundary line.
-	type seg struct {
-		label          string
-		x0, x1         int64
-		n              int     // readings in this location
-		downSum, upSum float64 // average throughput shown by the name
-		downN, upN     int
-		dbmSum         float64 // average signal shown by the name
-		dbmN           int
-		rttSum         float64 // average RTT quality shown by the name
-		rttN           int
-	}
-	var segs []seg
-	for i, r := range rs {
-		if i == 0 || r.label != rs[i-1].label {
-			if n := len(segs); n > 0 {
-				segs[n-1].x1 = int64(r.unix)
-			}
-			segs = append(segs, seg{label: r.label, x0: int64(r.unix), x1: int64(r.unix)})
-		}
-		s := &segs[len(segs)-1]
-		s.n++
-		if r.hasDown {
-			s.downSum += r.down
-			s.downN++
-		}
-		if r.hasUp {
-			s.upSum += r.up
-			s.upN++
-		}
-		if r.hasDbm {
-			s.dbmSum += r.dbm
-			s.dbmN++
-		}
-		if r.hasRtt {
-			s.rttSum += r.rtt
-			s.rttN++
-		}
-	}
-	if n := len(segs); n > 0 {
-		segs[n-1].x1 = int64(rs[len(rs)-1].unix)
-	}
+	segs := locationSegments(rs)
 	obj, shade := 1, 0
 	for _, s := range segs {
 		if s.x1 <= s.x0 {

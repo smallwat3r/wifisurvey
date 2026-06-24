@@ -32,17 +32,7 @@ func summarize(records [][]string) ([]spotStat, error) {
 	if len(records) < 2 {
 		return nil, errNoData
 	}
-	col := map[string]int{}
-	for i, name := range records[0] {
-		col[name] = i
-	}
-	// get reads a named column safely, missing column or short row yields "".
-	get := func(r []string, name string) string {
-		if i, ok := col[name]; ok && i < len(r) {
-			return r[i]
-		}
-		return ""
-	}
+	get := columns(records[0])
 	type agg struct {
 		down, up, rtt []float64
 		dbm           []int
@@ -93,7 +83,7 @@ func summarize(records [][]string) ([]spotStat, error) {
 		}
 		if len(a.dbm) > 0 {
 			s.hasDbm = true
-			s.avgDbm = int(math.Round(meanInt(a.dbm)))
+			s.avgDbm = int(math.Round(mean(a.dbm)))
 		}
 		out = append(out, s)
 	}

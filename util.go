@@ -78,18 +78,26 @@ func truncate(s string, n int) string {
 	return s
 }
 
-func mean(xs []float64) float64 {
-	var sum float64
-	for _, x := range xs {
-		sum += x
-	}
-	return sum / float64(len(xs))
-}
-
-func meanInt(xs []int) float64 {
-	var sum int
+func mean[T int | float64](xs []T) float64 {
+	var sum T
 	for _, x := range xs {
 		sum += x
 	}
 	return float64(sum) / float64(len(xs))
+}
+
+// columns indexes a CSV header row and returns a getter that reads a named
+// column from any record by name, yielding "" for a missing column or short
+// row. Lets the readers locate fields by header rather than fixed position.
+func columns(header []string) func(r []string, name string) string {
+	col := map[string]int{}
+	for i, n := range header {
+		col[n] = i
+	}
+	return func(r []string, name string) string {
+		if i, ok := col[name]; ok && i < len(r) {
+			return r[i]
+		}
+		return ""
+	}
 }

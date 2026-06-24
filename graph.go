@@ -67,16 +67,7 @@ func timeSeries(records [][]string) []reading {
 	if len(records) < 2 {
 		return nil
 	}
-	col := map[string]int{}
-	for i, n := range records[0] {
-		col[n] = i
-	}
-	get := func(r []string, name string) string {
-		if i, ok := col[name]; ok && i < len(r) {
-			return r[i]
-		}
-		return ""
-	}
+	get := columns(records[0])
 	var out []reading
 	for _, r := range records[1:] {
 		t, err := time.Parse("2006-01-02 15:04:05", get(r, "timestamp"))

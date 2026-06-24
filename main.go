@@ -4,8 +4,8 @@
 // so it reflects the real path traffic takes to its destination rather than
 // just the local link.
 //
-//	go run wifisurvey.go survey --host HOST  # walk, label landmarks, 'q' to stop
-//	go run wifisurvey.go analyse [--min-up 5] # weak spots from latest survey CSV (by up Mbps)
+//	go run . survey --host HOST  # walk, label landmarks, 'q' to stop
+//	go run . analyse [--min-up 5] # weak spots from latest survey CSV (by up Mbps)
 //
 // HOST is the iperf3 server (a hostname or IP). Run `iperf3 -s` there.
 // Each reading runs a download then an upload test, so it takes several seconds,
